@@ -99,6 +99,7 @@ pub fn relay_profile_from_ccs(
         model_insert_mode: Default::default(),
         model_list: String::new(),
         user_agent: String::new(),
+        http_headers: std::collections::BTreeMap::new(),
     }
 }
 

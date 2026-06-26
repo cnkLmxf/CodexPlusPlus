@@ -1,7 +1,7 @@
 use anyhow::Context;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
@@ -515,13 +515,19 @@ pub async fn test_relay_profile(
     }
 
     let payload = relay_profile_test_payload(profile.protocol, test_model);
-    let response = client
+    let mut request = client
         .post(&endpoint)
         .bearer_auth(api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&payload)
-        .send()
-        .await?;
+        .json(&payload);
+    for (key, value) in &profile.http_headers {
+        if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
+                request = request.header(header_name, header_value);
+            }
+        }
+    }
+    let response = request.send().await?;
     let http_status = response.status().as_u16();
 
     // 如果 404 且 base_url 末尾没有 /v1，尝试自动补 /v1 后再发一次。
@@ -533,13 +539,19 @@ pub async fn test_relay_profile(
             RelayProtocol::Responses => format!("{v1_url}/responses"),
             RelayProtocol::ChatCompletions => format!("{v1_url}/chat/completions"),
         };
-        let v1_response = client
+        let mut v1_request = client
             .post(&v1_endpoint)
             .bearer_auth(api_key)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .json(&payload)
-            .send()
-            .await?;
+            .json(&payload);
+        for (key, value) in &profile.http_headers {
+            if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+                if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
+                    v1_request = v1_request.header(header_name, header_value);
+                }
+            }
+        }
+        let v1_response = v1_request.send().await?;
         let v1_status = v1_response.status().as_u16();
         if v1_status < 400 {
             let response_text = v1_response.text().await.unwrap_or_default();

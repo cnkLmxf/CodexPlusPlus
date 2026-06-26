@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::settings::{RelayProfile, SettingsStore};
@@ -25,6 +25,7 @@ struct ModelSource {
     name: String,
     base_url: String,
     api_key: String,
+    http_headers: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default)]
@@ -365,6 +366,7 @@ fn model_sources_from_environment(
         } else {
             api_key
         },
+        http_headers: BTreeMap::new(),
     }]
 }
 
@@ -401,6 +403,7 @@ fn model_source_from_config(
         },
         base_url,
         api_key,
+        http_headers: BTreeMap::new(),
     })
 }
 
@@ -470,6 +473,13 @@ async fn fetch_models_from_source(
     if !source.api_key.is_empty() {
         request = request.bearer_auth(&source.api_key);
     }
+    for (key, value) in &source.http_headers {
+        if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
+                request = request.header(header_name, header_value);
+            }
+        }
+    }
 
     match request.send().await {
         Ok(response) if response.status().is_success() => match response.json::<Value>().await {
@@ -519,6 +529,7 @@ pub async fn fetch_relay_profile_model_ids(
             profile.upstream_base_url.trim().to_string()
         },
         api_key: profile.api_key.trim().to_string(),
+        http_headers: profile.http_headers.clone(),
     };
     if source.base_url.is_empty() {
         anyhow::bail!("Base URL 不能为空");

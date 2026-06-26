@@ -21,6 +21,7 @@ export type RelayProfile = {
   modelInsertMode: string;
   modelList: string;
   userAgent: string;
+  httpHeaders: Record<string, string>;
 };
 
 export type PresetPatch = Partial<RelayProfile>;

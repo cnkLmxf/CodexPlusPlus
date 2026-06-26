@@ -184,6 +184,7 @@ type RelayProfile = {
   autoCompactLimit: string;
   modelList: string;
   userAgent: string;
+  httpHeaders: Record<string, string>;
   aggregate?: RelayAggregateConfig | null;
 };
 
@@ -658,6 +659,7 @@ const defaultSettings: BackendSettings = {
       autoCompactLimit: "",
       modelList: "",
       userAgent: "",
+      httpHeaders: {},
     },
   ],
   relayCommonConfigContents: "",
@@ -3623,7 +3625,10 @@ function RelayProfileDetail({
   const validationError = isAggregateRelayProfile(draft) ? aggregateRelayProfileValidation(draft) : null;
   const saveDraft = async () => {
     if (validationError) return;
-    const normalizedDraft = isAggregateRelayProfile(draft) ? normalizeAggregateRelayProfile(draft, form) : deriveRelayProfileFromFiles(draft);
+    // 保存前把 draft 的 httpHeaders 同步进 configContents，
+    // 并通过 deriveRelayProfileFromFiles 重算派生字段。
+    const withHeaders = applyRelayProfilePatchToFiles(draft, { httpHeaders: draft.httpHeaders }, { allowGenerateFiles: isNew });
+    const normalizedDraft = isAggregateRelayProfile(withHeaders) ? normalizeAggregateRelayProfile(withHeaders, form) : deriveRelayProfileFromFiles(withHeaders);
     const next = isNew
       ? addRelayProfile(form, normalizedDraft)
       : updateRelayProfile(form, profile.id, normalizedDraft);
@@ -3640,7 +3645,8 @@ function RelayProfileDetail({
   };
   const switchDraft = () => {
     if (isNew || !form.relayProfilesEnabled) return;
-    const normalizedDraft = isAggregateRelayProfile(draft) ? normalizeAggregateRelayProfile(draft, form) : deriveRelayProfileFromFiles(draft);
+    const withHeaders = applyRelayProfilePatchToFiles(draft, { httpHeaders: draft.httpHeaders }, { allowGenerateFiles: isNew });
+    const normalizedDraft = isAggregateRelayProfile(withHeaders) ? normalizeAggregateRelayProfile(withHeaders, form) : deriveRelayProfileFromFiles(withHeaders);
     const previousActiveRelayId = form.activeRelayId;
     const next = syncLegacyRelayFields({
       ...form,
@@ -3740,6 +3746,12 @@ function RelayProfileEditor({
   const updateDraft = (patch: Partial<RelayProfile>) => {
     onProfileChange(applyRelayProfilePatchToFiles(profile, patch, { allowGenerateFiles: isNew }));
   };
+  // httpHeaders 是纯前端编辑态：直接替换 draft 上的字段，不走 TOML 同步，
+  // 避免空键占位行被 TOML 过滤逻辑吞掉导致“点击添加无反应”。
+  const updateHttpHeaders = (nextHeaders: Record<string, string>) => {
+    onProfileChange({ ...profile, httpHeaders: nextHeaders });
+  };
+
   return (
     <div className="relay-profile-editor">
       <div className="relay-editor-head">
@@ -3924,6 +3936,72 @@ function RelayProfileEditor({
               onChange={(event) => updateDraft({ userAgent: event.currentTarget.value })}
               placeholder="留空使用默认值"
             />
+          </Field>
+        ) : null}
+        {showApiFields ? (
+          <Field className="relay-field-http-headers" label="HTTP Headers">
+            <div className="custom-headers-list">
+              {(() => {
+                const headerEntries = httpHeadersToEntries(profile.httpHeaders);
+                if (headerEntries.length === 0) {
+                  return (
+                    <div className="custom-headers-empty">暂无自定义 Header，点击下方按钮添加。</div>
+                  );
+                }
+                return headerEntries.map((entry, index) => (
+                  <div key={index} className="custom-header-row">
+                    <Input
+                      className="custom-header-key"
+                      value={entry.key}
+                      placeholder="Header 名称"
+                      onChange={(event) => {
+                        const next = headerEntries.map((item, i) =>
+                          i === index ? { ...item, key: event.currentTarget.value } : item,
+                        );
+                        updateHttpHeaders(headersEntriesToRecord(next));
+                      }}
+                    />
+                    <Input
+                      className="custom-header-value"
+                      value={entry.value}
+                      placeholder="Header 值"
+                      onChange={(event) => {
+                        const next = headerEntries.map((item, i) =>
+                          i === index ? { ...item, value: event.currentTarget.value } : item,
+                        );
+                        updateHttpHeaders(headersEntriesToRecord(next));
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        const next = headerEntries.filter((_, i) => i !== index);
+                        updateHttpHeaders(headersEntriesToRecord(next));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ));
+              })()}
+              <Button
+                size="sm"
+                type="button"
+                variant="secondary"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const current = httpHeadersToEntries(profile.httpHeaders);
+                  current.push({ key: "", value: "" });
+                  updateHttpHeaders(headersEntriesToRecord(current));
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                添加 Header
+              </Button>
+            </div>
           </Field>
         ) : null}
       </div>
@@ -5468,6 +5546,7 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
             autoCompactLimit: "",
             modelList: "",
             userAgent: "",
+            httpHeaders: {},
           },
         ];
   const activeRelayId = profiles.some((profile) => profile.id === settings.activeRelayId)
@@ -5550,6 +5629,7 @@ function normalizeRelayProfile(profile: RelayProfile, defaultContextSelection = 
     autoCompactLimit: profile.autoCompactLimit || "",
     modelList: profile.modelList || "",
     userAgent: profile.userAgent || "",
+    httpHeaders: profile.httpHeaders || {},
     aggregate: null,
   };
   return relayProfileUsesLiveFiles(normalized) ? deriveRelayProfileFromFiles(normalized) : normalized;
@@ -5761,6 +5841,7 @@ function deriveRelayProfileFromFiles(profile: RelayProfile): RelayProfile {
       : codexApiKeyFromAuth(authContents) || configApiKey || "",
     contextWindow: codexTopLevelIntFromConfig(configContents, "model_context_window"),
     autoCompactLimit: codexTopLevelIntFromConfig(configContents, "model_auto_compact_token_limit"),
+    httpHeaders: profile.httpHeaders || {},
     configContents,
     authContents,
   };
@@ -5822,8 +5903,14 @@ function applyRelayProfilePatchToFiles(
       next = withGeneratedRelayFiles(next);
     }
   }
+  if ("httpHeaders" in patch) {
+    next.httpHeaders = patch.httpHeaders || {};
+  }
 
-  return deriveRelayProfileFromFiles(next);
+  const editedHttpHeaders = next.httpHeaders;
+  const derived = deriveRelayProfileFromFiles(next);
+  derived.httpHeaders = editedHttpHeaders;
+  return derived;
 }
 
 function codexModelFromConfig(contents: string): string {
@@ -6034,6 +6121,31 @@ function removeTomlSectionKey(contents: string, sectionName: string, key: string
   return ensureTrailingNewline(next.join("\n").trimEnd());
 }
 
+// 把 headers 行数组转成 Record：空键用占位符避免相互覆盖丢失
+// 在保存写 TOML 时会过滤掉空键空值
+function headersEntriesToRecord(entries: Array<{ key: string; value: string }>): Record<string, string> {
+  const result: Record<string, string> = {};
+  let placeholderIndex = 0;
+  for (const entry of entries) {
+    const key = entry.key.trim();
+    if (key) {
+      result[key] = entry.value;
+    } else {
+      placeholderIndex += 1;
+      result[`__placeholder_${placeholderIndex}`] = entry.value;
+    }
+  }
+  return result;
+}
+
+// 渲染时把占位符还原成空字符串显示
+function httpHeadersToEntries(headers: Record<string, string> | undefined): Array<{ key: string; value: string }> {
+  return Object.entries(headers || {}).map(([key, value]) => ({
+    key: key.startsWith("__placeholder_") ? "" : key,
+    value,
+  }));
+}
+
 function relayProfileSwitchValidation(profile: RelayProfile): string | null {
   if (isAggregateRelayProfile(profile)) {
     return aggregateRelayProfileValidation(profile);
@@ -6139,6 +6251,7 @@ function createRelayProfile(settings: BackendSettings): RelayProfile {
     autoCompactLimit: "",
     modelList: "",
     userAgent: "",
+    httpHeaders: {},
   };
   return withGeneratedRelayFiles(next);
 }
@@ -6168,6 +6281,7 @@ function createAggregateRelayProfile(settings: BackendSettings): RelayProfile {
       autoCompactLimit: "",
       modelList: "",
       userAgent: "",
+      httpHeaders: {},
       aggregate: {
         strategy: "failover",
         members: candidates.slice(0, 1).map((profile) => ({ profileId: profile.id, weight: 1 })),

@@ -1145,6 +1145,35 @@ body {
   grid-column: 1;
 }
 
+.relay-field-http-headers {
+  grid-column: 1;
+}
+
+.custom-headers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-headers-empty {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+
+.custom-header-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.custom-header-key {
+  flex: 1;
+}
+
+.custom-header-value {
+  flex: 2;
+}
+
 .protocol-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

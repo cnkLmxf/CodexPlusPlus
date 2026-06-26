@@ -540,6 +540,7 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
                 relay.api_key.trim(),
                 is_stream,
                 &upstream_body,
+                &relay.http_headers,
             ),
             is_stream,
         )
@@ -649,12 +650,15 @@ pub async fn open_models_proxy_request(
         }),
     );
     let upstream = send_upstream_request(
-        crate::http_client::proxied_client(&effective_user_agent(
-            &relay.user_agent,
-            original_user_agent,
-        ))?
-        .get(endpoint)
-        .bearer_auth(relay.api_key.trim()),
+        apply_custom_headers(
+            crate::http_client::proxied_client(&effective_user_agent(
+                &relay.user_agent,
+                original_user_agent,
+            ))?
+            .get(endpoint)
+            .bearer_auth(relay.api_key.trim()),
+            &relay.http_headers,
+        ),
     )
     .await?;
     let status_code = upstream.status().as_u16();
@@ -695,14 +699,17 @@ pub async fn open_chat_completions_proxy_request(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let upstream = crate::http_client::proxied_client(&effective_user_agent(
-        &relay.user_agent,
-        original_user_agent,
-    ))?
-    .post(chat_completions_url(&relay.base_url))
-    .bearer_auth(relay.api_key.trim())
-    .header(reqwest::header::CONTENT_TYPE, "application/json")
-    .json(&request_json)
+    let upstream = apply_custom_headers(
+        crate::http_client::proxied_client(&effective_user_agent(
+            &relay.user_agent,
+            original_user_agent,
+        ))?
+        .post(chat_completions_url(&relay.base_url))
+        .bearer_auth(relay.api_key.trim())
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&request_json),
+        &relay.http_headers,
+    )
     .send()
     .await?;
     let status_code = upstream.status().as_u16();
@@ -754,6 +761,7 @@ fn upstream_request_builder(
     api_key: &str,
     is_stream: bool,
     upstream_body: &Value,
+    http_headers: &BTreeMap<String, String>,
 ) -> reqwest::RequestBuilder {
     let mut builder = client
         .post(endpoint)
@@ -764,6 +772,7 @@ fn upstream_request_builder(
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .header(reqwest::header::CACHE_CONTROL, "no-cache");
     }
+    builder = apply_custom_headers(builder, http_headers);
     builder.json(upstream_body)
 }
 
@@ -799,6 +808,22 @@ fn effective_user_agent(configured_user_agent: &str, original_user_agent: Option
         .filter(|user_agent| !user_agent.is_empty())
         .unwrap_or("")
         .to_string()
+}
+
+/// 将自定义 HTTP Header 应用到请求构建器
+fn apply_custom_headers(
+    builder: reqwest::RequestBuilder,
+    headers: &BTreeMap<String, String>,
+) -> reqwest::RequestBuilder {
+    let mut builder = builder;
+    for (key, value) in headers {
+        if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+            if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
+                builder = builder.header(header_name, header_value);
+            }
+        }
+    }
+    builder
 }
 
 pub async fn handle_responses_proxy_request(body: &str) -> anyhow::Result<ProxyHttpResponse> {

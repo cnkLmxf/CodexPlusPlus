@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -87,6 +87,12 @@ pub struct RelayProfile {
         skip_serializing_if = "String::is_empty"
     )]
     pub user_agent: String,
+    #[serde(
+        rename = "httpHeaders",
+        default,
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub http_headers: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -142,6 +148,7 @@ impl Default for RelayProfile {
             model_insert_mode: RelayModelInsertMode::Patch,
             model_list: String::new(),
             user_agent: String::new(),
+            http_headers: BTreeMap::new(),
         }
     }
 }
@@ -381,6 +388,7 @@ impl BackendSettings {
                 model_insert_mode: RelayModelInsertMode::Patch,
                 model_list: String::new(),
                 user_agent: String::new(),
+                http_headers: BTreeMap::new(),
             };
         }
 
@@ -425,6 +433,7 @@ impl BackendSettings {
             model_insert_mode: RelayModelInsertMode::Patch,
             model_list: String::new(),
             user_agent: String::new(),
+            http_headers: BTreeMap::new(),
         }
     }
 
